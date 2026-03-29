@@ -68,6 +68,43 @@ on:
           - "SuperRyzen Clang"
           - "WeebX Clang"
 
+        USE_KSU:
+        description: 'Include KernelSU'
+        required: false
+        type: boolean
+        default: false
+        USE_SUSFS:
+        description: 'Include susfs4ksu (for 5.15)'
+        required: true
+        type: boolean
+        default: true
+      APPLY_NOMOUNT:
+        description: 'Apply nomount patch'
+        required: true
+        type: boolean
+        default: true
+      APPLY_ZRAM:
+        description: 'Optimize zRAM'
+        required: true
+        type: boolean
+        default: true
+      APPLY_BBR:
+        description: 'Enable BBR congestion control'
+        required: true
+        type: boolean
+        default: true
+      APPLY_VFS:
+        description: 'Optimize VFS cache'
+        required: true
+        type: boolean
+        default: true
+      APPLY_LTO_THIN:
+        description: 'Enable LTO Thin'
+        required: true
+        type: boolean
+        default: true
+
+
 jobs:
   Set-repos:
     name: "🐂 Parse repository"
@@ -353,6 +390,22 @@ jobs:
             echo "ℹ️ No localversion specified. Using default."
           fi
 
+      - name: Apply Patches
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        chmod +x $GITHUB_WORKSPACE/scripts/patch-scripts.sh
+        $GITHUB_WORKSPACE/scripts/patch-scripts.sh
+      env:
+        USE_KSU: ${{ github.event.inputs.USE_KSU }}
+        USE_SUSFS: ${{ github.event.inputs.USE_SUSFS }}
+        USE_KPM: ${{ github.event.inputs.USE_KPM }}
+        USE_SUKISU: ${{ github.event.inputs.USE_SUKISU }}
+        APPLY_NOMOUNT: ${{ github.event.inputs.APPLY_NOMOUNT }}
+        APPLY_ZRAM: ${{ github.event.inputs.APPLY_ZRAM }}
+        APPLY_BBR: ${{ github.event.inputs.APPLY_BBR }}
+        APPLY_VFS: ${{ github.event.inputs.APPLY_VFS }}
+        APPLY_LTO_THIN: ${{ github.event.inputs.APPLY_LTO_THIN }}
+      
       - name: "😋 Update KernelSU"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         if: ${{ github.event.inputs.kernelSUChoice == 'KernelSU' }}
