@@ -1,116 +1,348 @@
 name: "Build kernels"
-
 env:
-  CONFIGURATION: "repos.json"
   OUT_DIR: "out"
-
 on:
   workflow_dispatch:
+    inputs:
+      kernelSourceURL:
+        description: "Custom kernel source URL"
+        required: true
+        type: string
+        default: "https://github.com/KDEFFALT/kernel_msm-5.15"
+      kernelPrivateSource:
+        description: "Is private source?"
+        required: false
+        type: boolean
+        default: false
+      kernelBranch:
+        description: "Kernel branch (default if empty)"
+        required: false
+        type: string
+        default: "main"
+      kernelDevice:
+        description: "Device (used for defconfig)"
+        required: true
+        type: string
+        default: "gki"
+      kernelSourceName:
+        description: "Kernel source name"
+        required: true
+        type: string
+        default: "kernel_msm-5.15"
+      localVersion:
+        description: "Custom localversion name (e.g., -mybuild)"
+        required: false
+        type: string
+        default: ""
+      kernelSUChoice:
+        description: "Choose KernelSU version"
+        required: true
+        default: "KernelSU"
+        type: choice
+        options:
+          - "None"
+          - "KernelSU"
+          - "KernelSU-Next"
+          - "KernelSU-Next + Next-SuSFS"
+          - "KernelSU by @rsuntk"
+      withKernelSUSFS:
+        description: "Enable SUSFS"
+        required: false
+        type: boolean
+        default: false
+      susfsBranch:
+        description: "SUSFS branch to use"
+        required: false
+        type: string
+        default: "gki-android13-5.15"
+      clangCompiler:
+        description: "Clang compiler to use"
+        required: false
+        default: "ZyC Clang"
+        type: choice
+        options:
+          - "ZyC Clang"
+          - "Greenforce Clang"
+          - "SuperRyzen Clang"
+          - "WeebX Clang"
+      USE_KSU:
+        description: 'Include KernelSU'
+        required: false
+        type: boolean
+        default: false
+      USE_SUSFS:
+        description: 'Include susfs4ksu (for 5.15)'
+        required: true
+        type: boolean
+        default: true
+      USE_KPM:
+        description: 'Include Kernel Patch Manager'
+        required: false
+        type: boolean
+        default: false
+      USE_SUKISU:
+        description: 'Include SukiSU-Ultra'
+        required: false
+        type: boolean
+        default: false
+      APPLY_NOMOUNT:
+        description: 'Apply nomount patch'
+        required: true
+        type: boolean
+        default: true
+      APPLY_ZRAM:
+        description: 'Optimize zRAM'
+        required: true
+        type: boolean
+        default: true
+      APPLY_BBR:
+        description: 'Enable BBR congestion control'
+        required: true
+        type: boolean
+        default: true
+      APPLY_VFS:
+        description: 'Optimize VFS cache'
+        required: true
+        type: boolean
+        default: true
+      APPLY_LTO_THIN:
+        description: 'Enable LTO Thin'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   Set-repos:
-    name: "🐂 Parse repos.json"
+    name: "🐂 Parse repository"
     runs-on: ubuntu-latest
     outputs:
       repos: ${{ steps.generate-matrix.outputs.repos }}
     steps:
-      - name: "😄 Checkout"
-        uses: actions/checkout@v5
+      - name: "😀 Checkout"
+        uses: actions/checkout@v6
 
       - name: "😆 Generate Matrix"
         id: generate-matrix
         run: |
+          repos='[
+            {
+              "kernelSource": {
+                "repo": "",
+                "branch": ""
+              },
+              "toolchains": [
+                {
+                  "name": "clang",
+                  "url": ""
+                }
+              ],
+              "params": {
+                "ARCH": "arm64",
+                "CROSS_COMPILE": "aarch64-linux-gnu-",
+                "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
+                "CROSS_COMPILE_COMPAT": "arm-linux-gnueabi-",
+                "CLANG_TRIPLE": "aarch64-linux-gnu-",
+                "AR": "",
+                "CC": "clang"
+              }
+            }
+          ]'
+          repos=$(echo "$repos" | jq --arg url "${{ github.event.inputs.kernelSourceURL }}" --arg branch "${{ github.event.inputs.kernelBranch }}" '.[].kernelSource.repo = $url | .[].kernelSource.branch = $branch')
           echo "repos<<EOF" >> $GITHUB_OUTPUT
-          cat  ${{ env.CONFIGURATION }} >> $GITHUB_OUTPUT
+          echo "$repos" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
   Build-Kernel:
     name: "🐎 Build kernel"
     runs-on: ubuntu-latest
-    needs:
-      - Set-repos
+    needs: Set-repos
     strategy:
       max-parallel: 2
       fail-fast: false
       matrix:
         repos: ${{ fromJSON(needs.Set-repos.outputs.repos) }}
     env:
-      kernelDir: ${{ matrix.repos.kernelSource.name }}_${{ matrix.repos.kernelSource.device }}
-
-      kernelName: ${{ matrix.repos.kernelSource.name }}
-      kernelRepo: ${{ matrix.repos.kernelSource.repo }}
-      kernelBranch: ${{ matrix.repos.kernelSource.branch }}
-      kernelDevice: ${{ matrix.repos.kernelSource.device }}
-
-      DEFCONFIG_NAME: ${{ matrix.repos.kernelSource.device }}_defconfig
-
-      withKernelSU: ${{ matrix.repos.withKernelSU }}
+      kernelDir: ${{ github.event.inputs.kernelSourceName }}_${{ github.event.inputs.kernelDevice }}
+      kernelName: ${{ github.event.inputs.kernelSourceName }}
+      kernelRepo: ${{ github.event.inputs.kernelSourceURL }}
+      kernelBranch: ${{ github.event.inputs.kernelBranch }}
+      kernelDevice: ${{ github.event.inputs.kernelDevice }}
+      DEFCONFIG_NAME: ${{ github.event.inputs.kernelDevice }}_defconfig
+      TOOLCHAINS: |
+        [
+          {
+            "name": "clang",
+            "url": "${{ github.event.inputs.clangCompiler }}"
+          }
+        ]
+      PARAMS: |
+        {
+          "ARCH": "arm64",
+          "CROSS_COMPILE": "aarch64-linux-gnu-",
+          "CROSS_COMPILE_ARM32": "arm-linux-gnueabi-",
+          "CLANG_TRIPLE": "aarch64-linux-gnu-",
+          "AR": "",
+          "CC": "clang"
+        }
     steps:
+      - name: "😀 Checkout"
+        uses: actions/checkout@v6
+
       - name: "✨ Create working dir"
-        run: mkdir -p $kernelDir
+        run: mkdir -p ${{ env.kernelDir }}
+
+      - name: "🕒 Generate Timestamp"
+        run: echo "BUILD_TIME=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
 
       - name: "⭐ Install prerequisites"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python2 python3 libarchive-tools
+          sudo apt-get install -y build-essential bc curl flex cpio ccache rsync git zip dwarves libelf-dev ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python3 libarchive-tools clang lld llvm llvm-dev
 
-      - name: "🌟 Clone kernel source => (${{ env.kernelRepo }})"
-        working-directory: ./${{ env.kernelDir }}
-        run: |
-          git clone --recursive --branch $kernelBranch $kernelRepo $kernelName --depth=1
-
-      - name: "💫 Get toolchains"
+      - name: "🌟 Clone kernel source"
         working-directory: ./${{ env.kernelDir }}
         env:
-          toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
+          PRIVATE_SOURCE: ${{ github.event.inputs.kernelSourceURL }}
         run: |
-          toolchains_num="$(echo $toolchains | jq 'length')"
-          echo $toolchains_num
-          for ((i=0;i<toolchains_num;i++)); do
-            name=$(echo $toolchains | jq -r ".[$i].name")
-            repo=$(echo $toolchains | jq -r ".[$i].repo")
-            branch=$(echo $toolchains | jq -r ".[$i].branch")
-            git clone --recursive --branch $branch $repo $name --depth=1
-            echo "$(pwd)/$name/" >> $GITHUB_PATH
-            echo "$(pwd)/$name/bin" >> $GITHUB_PATH
-          done
+          set -x
+          if [ "${{ github.event.inputs.kernelPrivateSource }}" == "true" ]; then
+            if [[ "$PRIVATE_SOURCE" == *"github.com"* ]]; then
+              PRIVATE_SOURCE="${PRIVATE_SOURCE#https://github.com/}"
+              OWNER=$(echo "$PRIVATE_SOURCE" | cut -d'/' -f1)
+              REPO_PREFIX="https://$OWNER:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/"
+            elif [[ "$PRIVATE_SOURCE" == *"gitlab.com"* ]]; then
+              PRIVATE_SOURCE="${PRIVATE_SOURCE#https://gitlab.com/}"
+              OWNER=$(echo "$PRIVATE_SOURCE" | cut -d'/' -f1)
+              REPO_PREFIX="https://$OWNER:${{ secrets.PRIVATE_REPO_TOKEN }}@gitlab.com/"
+            else
+              echo "Unsupported repository source: $PRIVATE_SOURCE"
+              exit 1
+            fi
+            echo "Final URL: ${REPO_PREFIX}${PRIVATE_SOURCE}"
+            git clone --recursive --branch ${{ github.event.inputs.kernelBranch }} \
+              "$REPO_PREFIX$PRIVATE_SOURCE" ${{ env.kernelName }} --depth=1
+          else
+            git clone --recursive --branch ${{ github.event.inputs.kernelBranch }} \
+              ${{ github.event.inputs.kernelSourceURL }} ${{ env.kernelName }} --depth=1
+          fi
 
-          echo "PATH Variable: $PATH"
+      - name: "💫 Get Toolchains"
+        run: |
+          set -e
+          get_latest_github_release() {
+            local repo_url="$1"
+            latest_url=$(curl -sL "https://api.github.com/repos/$repo_url/releases/latest" \
+              | grep "browser_download_url.*tar.gz" \
+              | cut -d '"' -f 4 \
+              | head -n 1)
+            if [[ -z "$latest_url" ]]; then
+              echo "❌ Failed to fetch latest release from $repo_url!"
+              exit 1
+            fi
+            printf "%s" "$latest_url"
+          }
+          case "${{ github.event.inputs.clangCompiler }}" in
+            "ZyC Clang")
+              clang_url=$(get_latest_github_release "ZyCromerZ/Clang")
+              ;;
+            "Greenforce Clang")
+              clang_url=$(get_latest_github_release "greenforce-project/greenforce_clang")
+              ;;
+            "SuperRyzen Clang")
+              clang_url="https://gitlab.com/TianWalkzzMiku/SuperRyzen-Clang/"
+              ;;
+            "WeebX Clang")
+              clang_url=$(get_latest_github_release "XSans0/WeebX-Clang")
+              ;;
+            *)
+              echo "❌ Unsupported Clang compiler: ${{ github.event.inputs.clangCompiler }}"
+              exit 1
+              ;;
+          esac
+          echo "✅ Clang URL: $clang_url"
+          mkdir -p clang
+          if [[ "$clang_url" == *.tar.gz ]]; then
+            echo "🚀 Downloading latest Clang from: $clang_url..."
+            wget --progress=bar:force -O "clang/clang.tar.gz" "$clang_url" || { echo "❌ Failed to download Clang!"; exit 1; }
+            echo "📦 Extracting Clang..."
+            tar -xf clang/clang.tar.gz -C clang || { echo "❌ Extraction failed!"; exit 1; }
+            rm -f clang/clang.tar.gz
+          else
+            echo "🚀 Cloning Clang from $clang_url..."
+            git clone --recursive --depth=1 "$clang_url" clang || { echo "❌ Cloning failed!"; exit 1; }
+          fi
+          if [ -d "clang/bin" ]; then
+            CLANG_PATH="${{ github.workspace }}/clang/bin"
+          else
+            CLANG_PATH=$(find clang -type d -name "bin" | head -n 1)
+            CLANG_PATH="${{ github.workspace }}/${CLANG_PATH}"
+          fi
+          if [ ! -f "$CLANG_PATH/clang" ]; then
+            echo "❌ Clang binary not found in $CLANG_PATH! Build might fail."
+            ls -R clang
+            exit 1
+          fi
+          echo "✅ Using Clang from $CLANG_PATH"
+          echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
+          echo "$CLANG_PATH" >> $GITHUB_PATH
+          export PATH="$CLANG_PATH:$PATH"
+          export CLANG_TRIPLE="aarch64-linux-gnu-"
+          export CC="ccache clang"
+          export AR="llvm-ar"
+          export AS="llvm-as"
+          export NM="llvm-nm"
+          export OBJCOPY="llvm-objcopy"
+          export OBJDUMP="llvm-objdump"
+          export STRIP="llvm-strip"
+          echo "⚙️ Using Clang version:"
+          clang --version || echo "❌ Clang not found in PATH!"
 
-      - name: "😎 Set args"
+      - name: "📖 Set swap to 20G"
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 20
+
+      - name: "⚡ Tune Swap Settings"
+        run: |
+          echo "vm.swappiness=100" | sudo tee -a /etc/sysctl.conf
+          sudo sysctl -p
+
+      - name: "⚡ Configure ccache"
+        run: |
+          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
+          echo "CC='ccache clang'" >> $GITHUB_ENV
+          echo "CXX='ccache clang++'" >> $GITHUB_ENV
+          echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
+
+      - name: "😎 Set args for GKI"
         id: generate-args
         working-directory: ./${{ env.kernelDir }}
         env:
           params: "${{ toJSON(matrix.repos.params) }}"
-          THREAD: $(nproc --all)
         run: |
-          echo "PATH Variable: $PATH"
           ARCH=$(echo $params | jq -r ".ARCH")
           CROSS_COMPILE=$(echo $params | jq -r ".CROSS_COMPILE")
-          CROSS_COMPILE_COMPAT=$(echo $params | jq -r ".CROSS_COMPILE_COMPAT")
           CROSS_COMPILE_ARM32=$(echo $params | jq -r ".CROSS_COMPILE_ARM32")
           CLANG_TRIPLE=$(echo $params | jq -r ".CLANG_TRIPLE")
           AR=$(echo $params | jq -r ".AR")
           CC=$(echo $params | jq -r ".CC")
-
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
-
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "LLVM=1" >> $GITHUB_ENV
+          echo "LTO=thin" >> $GITHUB_ENV
           args="-j$(nproc --all)"
           if [ -n "${{ env.OUT_DIR }}" ]; then
             mkdir -p $(pwd)/${{ env.OUT_DIR }}
             args="$args O=$(pwd)/${{ env.OUT_DIR }}"
           fi
-          if [ -n "$ARCH" ]; then
-            args="$args ARCH=$ARCH"
-          fi
+          args="$args ARCH=arm64 LLVM=1 LTO=thin"
           if [ -n "$CROSS_COMPILE" ]; then
             args="$args CROSS_COMPILE=$CROSS_COMPILE"
           fi
           if [ -n "$CLANG_TRIPLE" ]; then
             args="$args CLANG_TRIPLE=$CLANG_TRIPLE"
           fi
-          if [ -n "$CROSS_COMPILE_COMPAT" ]; then
-            args="$args CROSS_COMPILE_ARM32=$CROSS_COMPILE_COMPAT"
+          if [ -n "$CROSS_COMPILE_ARM32" ]; then
+            args="$args CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
           fi
           if [ -n "$AR" ]; then
             args="$args AR=$AR"
@@ -120,24 +352,32 @@ jobs:
           fi
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "😋 Update KernelSU"
+      - name: "🛠️ Set localversion name in defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        if: ${{ env.withKernelSU == 'true' }}
+        env:
+          LOCALVERSION: ${{ github.event.inputs.localVersion }}
         run: |
-          if [ -d "./KernelSU" ]; then
-            rm -rf "./KernelSU"
+          if [ -n "$LOCALVERSION" ]; then
+            echo "CONFIG_LOCALVERSION=\"$LOCALVERSION\"" >> arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+            echo "✅ Set CONFIG_LOCALVERSION to: $LOCALVERSION"
+          else
+            echo "ℹ️ No localversion specified. Using default."
           fi
-          if [ -d "./drivers/kernelsu" ]; then
-            rm -rf "./drivers/kernelsu"
-          fi
 
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-
-          echo -e "\nCONFIG_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "\nCONFIG_HAVE_KPROBES=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "\nCONFIG_KPROBE_EVENTS=y" >> ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-          cat ./arch/${{ env.ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+      - name: Apply Kernel Patches
+        run: |
+          chmod +x scripts/patch-scripts.sh
+          ./scripts/patch-scripts.sh
+        env:
+          USE_KSU: ${{ github.event.inputs.USE_KSU }}
+          USE_SUSFS: ${{ github.event.inputs.USE_SUSFS }}
+          USE_KPM: ${{ github.event.inputs.USE_KPM }}
+          USE_SUKISU: ${{ github.event.inputs.USE_SUKISU }}
+          APPLY_NOMOUNT: ${{ github.event.inputs.APPLY_NOMOUNT }}
+          APPLY_ZRAM: ${{ github.event.inputs.APPLY_ZRAM }}
+          APPLY_BBR: ${{ github.event.inputs.APPLY_BBR }}
+          APPLY_VFS: ${{ github.event.inputs.APPLY_VFS }}
+          APPLY_LTO_THIN: ${{ github.event.inputs.APPLY_LTO_THIN }}
 
       - name: "👍 Make defconfig"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -152,37 +392,49 @@ jobs:
         env:
           args: ${{ steps.generate-args.outputs.args }}
         run: |
-          echo "PATH Variable: $PATH"
-          make ${args}
+          export KBUILD_BUILD_USER="リアム"
+          export KBUILD_BUILD_HOST="belowzeroiq"
+          export CCACHE_DIR="${{ github.workspace }}/.ccache"
+          export CCACHE_NOCOMPRESS=true
+          export CCACHE_MAXSIZE=10G
+          export CCACHE_CPP2=yes
+          ccache -z
+          make ${args} \
+            LLVM=1 \
+            LTO=thin \
+            CC="ccache clang" \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            KBUILD_BUILD_USER="$KBUILD_BUILD_USER" \
+            KBUILD_BUILD_HOST="$KBUILD_BUILD_HOST" \
+            -j$(nproc --all)
 
       - name: "💛 Upload Image"
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
-          name: Image(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
+          name: "${{ env.kernelDevice }}_${{ env.kernelName }}_${{ env.kernelBranch }}_${{ env.BUILD_TIME }}"
           path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: "💙 Upload Image.gz"
-        uses: actions/upload-artifact@v5
-        with:
-          name: Image.gz(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image.gz
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: "💜 Upload dtb"
-        uses: actions/upload-artifact@v5
-        with:
-          name: dtb(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtb
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: "❤️ Upload dtbo.img"
-        uses: actions/upload-artifact@v5
-        with:
-          name: dtbo.img(${{ env.kernelDevice }}-${{ env.kernelName }}-${{ env.kernelBranch }})
-          path: ./${{ env.kernelDir }}/${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/dtbo.img
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: "💾 Pack Anykernel3"
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          set -e
+          [ ! -d "AnyKernel3" ] && git clone https://github.com/topnotchfreaks/AnyKernel3.git --depth=1
+          KERNEL_IMAGE_PATH="../${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot/Image"
+          if [ ! -f "$KERNEL_IMAGE_PATH" ]; then
+            echo "Checking for alternative image names..."
+            KERNEL_IMAGE_PATH=$(find ../${{ env.OUT_DIR }}/arch/${{ env.ARCH }}/boot -name "Image*" | head -n 1)
+            if [ -z "$KERNEL_IMAGE_PATH" ]; then
+              echo "Error: No kernel image found."
+              exit 1
+            fi
+          fi
+          echo "Found kernel image at: $KERNEL_IMAGE_PATH"
+          cp "$KERNEL_IMAGE_PATH" AnyKernel3/Image
+          ZIP_NAME="${{ env.kernelBranch }}_${{ env.BUILD
