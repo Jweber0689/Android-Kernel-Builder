@@ -161,6 +161,22 @@ if [[ "$APPLY_NOMOUNT" == "true" ]]; then
 fi
 
 # ============================================================
+#  Nomount Source Files (Required)
+# ============================================================
+
+if [[ "$APPLY_NOMOUNT" == "true" ]]; then
+    log "Fetching nomount source files..."
+
+    mkdir -p fs/nomount
+    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/main/kernel/fs/nomount/nomount.c" \
+        -o fs/nomount/nomount.c
+
+    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/main/kernel/include/linux/nomount.h" \
+        -o include/linux/nomount.h
+
+    log "Nomount source files added."
+fi
+# ============================================================
 #  zRAM / BBR / VFS / LTO
 # ============================================================
 
