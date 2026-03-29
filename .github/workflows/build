@@ -278,7 +278,7 @@ jobs:
             CLANG_PATH="${{ github.workspace }}/${CLANG_PATH}"
           fi
           if [ ! -f "$CLANG_PATH/clang" ]; then
-            echo "❌ Clang binat found in $CLANG_PATH! Build might fail."
+            echo "❌ Clang binary not found in $CLANG_PATH! Build might fail."
             ls -R clang
             exit 1
           fi
@@ -437,4 +437,4 @@ jobs:
           fi
           echo "Found kernel image at: $KERNEL_IMAGE_PATH"
           cp "$KERNEL_IMAGE_PATH" AnyKernel3/Image
-          ZIP_NAME="${{ env.kernelBranch }}_${{ env.BUILD
+          ZIP_NAME
