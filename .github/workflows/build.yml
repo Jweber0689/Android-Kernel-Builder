@@ -198,13 +198,13 @@ jobs:
           "${{ github.event.inputs.kernelSourceURL }}" kernel
 
     # ============================================================
-    # APPLY PATCH MANAGER
+    # APPLY PATCH MANAGER (CORRECT PATH)
     # ============================================================
     - name: Apply Patch Manager
       working-directory: ./kernel
       run: |
-        chmod +x scripts/patch-scripts.sh
-        ./scripts/patch-scripts.sh
+        chmod +x $GITHUB_WORKSPACE/.github/scripts/patch-scripts.sh
+        bash $GITHUB_WORKSPACE/.github/scripts/patch-scripts.sh
       env:
         USE_SUSFS: ${{ github.event.inputs.USE_SUSFS }}
         USE_KPM: ${{ github.event.inputs.USE_KPM }}
@@ -253,7 +253,7 @@ jobs:
       working-directory: ./kernel
       run: |
         export KBUILD_BUILD_USER="Jeremy"
-        export KBUILD_BUILD_HOST="Jweb0689"
+        export KBUILD_BUILD_HOST="Jweber0689"
         make -j$(nproc --all) O=out ARCH=arm64 LLVM=1
 
     # ============================================================
