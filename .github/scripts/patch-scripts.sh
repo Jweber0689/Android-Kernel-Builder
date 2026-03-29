@@ -2,18 +2,6 @@
 # ============================================================
 #  Unified Kernel Patch Manager
 #  Handles ALL patching except KernelSU itself
-#  Includes:
-#   - SUSFS auto-resolver (GitHub → GitLab fallback)
-#   - SUSFS base patch + KSU-side patch
-#   - SUSFS source file copying
-#   - SUSFS Kconfig cleanup
-#   - KPM integration
-#   - SukiSU-Ultra integration
-#   - nomount patch
-#   - zRAM, BBR, VFS, LTO
-#   - ABI bypass
-#   - Defconfig cleanup
-#   - Reject scanning
 # ============================================================
 
 set -e
@@ -57,20 +45,33 @@ detect_kernel_version
 
 # ============================================================
 #  SUSFS Auto-Resolver (GitHub → GitLab fallback)
+#  PRIORITY UPDATED: gki-android13 FIRST for 5.15 kernels
 # ============================================================
 
 resolve_susfs_branch() {
     SUSFS_REPO_GH="https://github.com/ShirkNeko/susfs4ksu.git"
     SUSFS_REPO_GL="https://gitlab.com/simonpunk/susfs4ksu.git"
 
-    BRANCHES=(
-        "gki-android16-${KERNEL_VER}"
-        "gki-android15-${KERNEL_VER}"
-        "gki-android14-${KERNEL_VER}"
-        "gki-android13-${KERNEL_VER}"
-        "gki-android12-${KERNEL_VER}"
-        "kernel-${KERNEL_VER}"
-    )
+    # Motorola Edge+ 2023 uses Android 13 → kernel 5.15
+    if [[ "$KERNEL_VER" == "5.15" ]]; then
+        BRANCHES=(
+            "gki-android13-5.15"
+            "gki-android14-5.15"
+            "gki-android15-5.15"
+            "gki-android16-5.15"
+            "gki-android12-5.15"
+            "kernel-5.15"
+        )
+    else
+        BRANCHES=(
+            "gki-android13-${KERNEL_VER}"
+            "gki-android14-${KERNEL_VER}"
+            "gki-android15-${KERNEL_VER}"
+            "gki-android16-${KERNEL_VER}"
+            "gki-android12-${KERNEL_VER}"
+            "kernel-${KERNEL_VER}"
+        )
+    fi
 
     for B in "${BRANCHES[@]}"; do
         if git ls-remote --heads "$SUSFS_REPO_GH" "$B" | grep -q .; then
