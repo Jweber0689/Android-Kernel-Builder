@@ -45,14 +45,13 @@ detect_kernel_version
 
 # ============================================================
 #  SUSFS Auto-Resolver (GitHub → GitLab fallback)
-#  PRIORITY UPDATED: gki-android13 FIRST for 5.15 kernels
+#  PRIORITY: gki-android13-5.15 for 5.15 kernels
 # ============================================================
 
 resolve_susfs_branch() {
     SUSFS_REPO_GH="https://github.com/ShirkNeko/susfs4ksu.git"
     SUSFS_REPO_GL="https://gitlab.com/simonpunk/susfs4ksu.git"
 
-    # Motorola Edge+ 2023 uses Android 13 → kernel 5.15
     if [[ "$KERNEL_VER" == "5.15" ]]; then
         BRANCHES=(
             "gki-android13-5.15"
@@ -113,7 +112,7 @@ if [[ "$USE_SUSFS" == "true" ]]; then
     cp -r ../susfs_patches/kernel_patches/fs/* fs/ 2>/dev/null || true
     cp -r ../susfs_patches/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
 
-    log "Applying SUSFS KSU-side patch..."
+    log "Applying SUSFS KSU-side patch (if KernelSU present)..."
     if [[ -d KernelSU ]]; then
         KSU_PATCH=$(find ../susfs_patches/kernel_patches/KernelSU -name '10_enable_susfs_for_ksu.patch' | head -1)
         if [[ -n "$KSU_PATCH" ]]; then
@@ -151,7 +150,7 @@ if [[ "$USE_SUKISU" == "true" ]]; then
 fi
 
 # ============================================================
-#  Nomount (after SUSFS + KSU)
+#  Nomount (after SUSFS + KSU-side SUSFS)
 # ============================================================
 
 if [[ "$APPLY_NOMOUNT" == "true" ]]; then
@@ -194,6 +193,34 @@ EOF
 fi
 
 # ============================================================
+#  KernelSU compatibility: stub app_profile.h if missing
+# ============================================================
+
+if [[ -d drivers/kernelsu ]]; then
+    if [[ ! -f drivers/kernelsu/policy/uapi/app_profile.h ]]; then
+        log "Creating stub uapi/app_profile.h for KernelSU..."
+
+        mkdir -p drivers/kernelsu/policy/uapi
+
+        cat << 'EOF' > drivers/kernelsu/policy/uapi/app_profile.h
+#ifndef _APP_PROFILE_H
+#define _APP_PROFILE_H
+
+/* Stub app_profile for kernels without vendor app_profile support.
+ * Adjust if your KernelSU variant actually uses this struct.
+ */
+
+struct app_profile {
+    int dummy;
+};
+
+#endif /* _APP_PROFILE_H */
+EOF
+
+    fi
+fi
+
+# ============================================================
 #  zRAM / BBR / VFS / LTO
 # ============================================================
 
@@ -227,11 +254,13 @@ touch abi_symbollist.raw 2>/dev/null || true
 sed -i 's/check_defconfig//' build.config.gki 2>/dev/null || true
 
 # ============================================================
-#  Reject Scanner
+#  Reject Scanner (Improved)
 # ============================================================
 
 log "Collecting patch rejects..."
-mkdir -p ../patch-rejects
-find . -type f -name '*.rej' -exec cp --parents {} ../patch-rejects/ \; || true
+REJECT_DIR="$GITHUB_WORKSPACE/patch-rejects"
+mkdir -p "$REJECT_DIR"
+find . -type f -name '*.rej' -exec cp --parents {} "$REJECT_DIR" \; || true
+log "Rejects saved to: $REJECT_DIR"
 
 log "Patch manager completed successfully."
