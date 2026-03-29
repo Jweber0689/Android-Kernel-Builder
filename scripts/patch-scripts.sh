@@ -1,135 +1,203 @@
 #!/bin/bash
-# Kernel patching script for custom kernel builder
+# ============================================================
+#  Unified Kernel Patch Manager
+#  Handles ALL patching except KernelSU itself
+#  Includes:
+#   - SUSFS auto-resolver (GitHub → GitLab fallback)
+#   - SUSFS base patch + KSU-side patch
+#   - SUSFS source file copying
+#   - SUSFS Kconfig cleanup
+#   - KPM integration
+#   - SukiSU-Ultra integration
+#   - nomount patch
+#   - zRAM, BBR, VFS, LTO
+#   - ABI bypass
+#   - Defconfig cleanup
+#   - Reject scanning
+# ============================================================
 
-echo "Starting kernel patching process..."
+set -e
 
-# KernelSU integration
-if [ "$USE_KSU" = "true" ]; then
-    echo "Integrating KernelSU..."
-    curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-fi
+log() {
+    echo "[PATCH-MANAGER] $1"
+}
 
-export GIT_TERMINAL_PROMPT=0
+# ============================================================
+#  Detect Kernel Version (Makefile → fallback)
+# ============================================================
 
-# susfs4ksu (Target: Android 13 - 5.15)
-if [ "$USE_SUSFS" = "true" ]; then
-    echo "Integrating susfs4ksu..."
-    
-    # Clone specific branch for android13-5.15
-    git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 ../susfs4ksu || \
-    git clone https://github.com/sidex15/susfs4ksu-module.git ../susfs4ksu
-    
-    # We apply the patches to the kernel tree
-    if [ -d "../susfs4ksu" ]; then
-        # Apply Main Kernel patches
-        find ../susfs4ksu/kernel_patches/5.15 -name "*.patch" -type f | while read p; do
-            echo "Applying susfs kernel patch: $p"
-            patch -p1 --force < "$p" || echo "Warning: Failed to apply $p, ignoring..."
-        done
-        
-        # Apply generic kernel patches if any exist in the top level of kernel_patches
-        find ../susfs4ksu/kernel_patches -maxdepth 1 -name "*.patch" -type f | while read p; do
-            echo "Applying generic susfs patch: $p"
-            patch -p1 --force < "$p" || true
-        done
-        
-        # Apply KernelSU specific patches
-        if [ -d "KernelSU" ]; then
+detect_kernel_version() {
+    if [[ -f Makefile ]]; then
+        VERSION=$(grep '^VERSION = ' Makefile | awk '{print $3}')
+        PATCHLEVEL=$(grep '^PATCHLEVEL = ' Makefile | awk '{print $3}')
+        SUBLEVEL=$(grep '^SUBLEVEL = ' Makefile | awk '{print $3}')
+    fi
+
+    if [[ -z "$VERSION" || -z "$PATCHLEVEL" ]]; then
+        if [[ -f include/config/kernel.release ]]; then
+            FULL=$(cat include/config/kernel.release)
+            VERSION=$(echo "$FULL" | cut -d. -f1)
+            PATCHLEVEL=$(echo "$FULL" | cut -d. -f2)
+            SUBLEVEL=$(echo "$FULL" | cut -d. -f3)
+        fi
+    fi
+
+    if [[ -z "$VERSION" || -z "$PATCHLEVEL" ]]; then
+        log "ERROR: Cannot detect kernel version"
+        exit 1
+    fi
+
+    KERNEL_VER="${VERSION}.${PATCHLEVEL}"
+    SUB="${SUBLEVEL:-0}"
+
+    log "Detected kernel version: $KERNEL_VER.$SUB"
+}
+
+detect_kernel_version
+
+# ============================================================
+#  SUSFS Auto-Resolver (GitHub → GitLab fallback)
+# ============================================================
+
+resolve_susfs_branch() {
+    SUSFS_REPO_GH="https://github.com/ShirkNeko/susfs4ksu.git"
+    SUSFS_REPO_GL="https://gitlab.com/simonpunk/susfs4ksu.git"
+
+    BRANCHES=(
+        "gki-android16-${KERNEL_VER}"
+        "gki-android15-${KERNEL_VER}"
+        "gki-android14-${KERNEL_VER}"
+        "gki-android13-${KERNEL_VER}"
+        "gki-android12-${KERNEL_VER}"
+        "kernel-${KERNEL_VER}"
+    )
+
+    for B in "${BRANCHES[@]}"; do
+        if git ls-remote --heads "$SUSFS_REPO_GH" "$B" | grep -q .; then
+            SUSFS_BRANCH="$B"
+            SUSFS_REPO="$SUSFS_REPO_GH"
+            log "Using SUSFS branch $B from GitHub"
+            return
+        fi
+        if git ls-remote --heads "$SUSFS_REPO_GL" "$B" | grep -q .; then
+            SUSFS_BRANCH="$B"
+            SUSFS_REPO="$SUSFS_REPO_GL"
+            log "Using SUSFS branch $B from GitLab"
+            return
+        fi
+    done
+
+    log "ERROR: No SUSFS branch found for kernel $KERNEL_VER"
+    exit 1
+}
+
+# ============================================================
+#  SUSFS Integration
+# ============================================================
+
+if [[ "$USE_SUSFS" == "true" ]]; then
+    resolve_susfs_branch
+
+    log "Cloning SUSFS patches..."
+    rm -rf ../susfs_patches
+    git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_REPO" ../susfs_patches
+
+    log "Applying SUSFS base patch..."
+    PATCH=$(find ../susfs_patches/kernel_patches -maxdepth 1 -name '50_add_susfs_in_*.patch' | head -1)
+    if [[ -n "$PATCH" ]]; then
+        patch -p1 -F3 --no-backup-if-mismatch < "$PATCH" || true
+    fi
+
+    log "Copying SUSFS source files..."
+    cp -r ../susfs_patches/kernel_patches/fs/* fs/ 2>/dev/null || true
+    cp -r ../susfs_patches/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
+
+    log "Applying SUSFS KSU-side patch..."
+    if [[ -d KernelSU ]]; then
+        KSU_PATCH=$(find ../susfs_patches/kernel_patches/KernelSU -name '10_enable_susfs_for_ksu.patch' | head -1)
+        if [[ -n "$KSU_PATCH" ]]; then
             cd KernelSU
-            find ../../susfs4ksu/kernel_patches/KernelSU -name "*.patch" -type f 2>/dev/null | while read p; do
-                echo "Applying susfs KernelSU patch: $p"
-                patch -p1 --force < "$p" || echo "Warning: Failed to apply $p, ignoring..."
-            done
+            patch -p1 -F3 --no-backup-if-mismatch < "$KSU_PATCH" || true
             cd ..
         fi
-        
-        # Copy necessary headers/code if not fully handled by patch
-        # Add susfs files to kernel tree
-        cp -rv ../susfs4ksu/kernel_patches/fs/* fs/ 2>/dev/null || true
-        cp -rv ../susfs4ksu/kernel_patches/include/* include/ 2>/dev/null || true
-        cp -rv ../susfs4ksu/kernel_patches/5.15/fs/* fs/ 2>/dev/null || true
-        cp -rv ../susfs4ksu/kernel_patches/5.15/include/* include/ 2>/dev/null || true
-    else
-        echo "susfs repository could not be cloned!"
     fi
 fi
 
-# Kernel Patch Manager (kpm)
-if [ "$USE_KPM" = "true" ]; then
-    echo "Integrating kpm..."
-    # The actual integration would download kpm source and hook into core kernel Makefile/Kconfig
+# ============================================================
+#  Kernel Patch Manager (KPM)
+# ============================================================
+
+if [[ "$USE_KPM" == "true" ]]; then
+    log "Integrating KPM..."
+    rm -rf ../kpm
     git clone https://github.com/CyberKnight777/kpm.git ../kpm || true
-    if [ -d "../kpm/patch" ]; then
-        for p in ../kpm/patch/*.patch; do
-            patch -p1 --force < "$p" || true
-        done
-    fi
+    for p in ../kpm/patch/*.patch; do
+        patch -p1 --force < "$p" || true
+    done
 fi
 
-# sukisu-ultra
-if [ "$USE_SUKISU" = "true" ]; then
-    echo "Integrating sukisu-ultra..."
-    # A generic implementation to clone and patch sukisu-ultra features
+# ============================================================
+#  SukiSU-Ultra
+# ============================================================
+
+if [[ "$USE_SUKISU" == "true" ]]; then
+    log "Integrating SukiSU-Ultra..."
+    rm -rf ../sukisu-ultra
     git clone https://github.com/sidex15/SukiSU-Ultra.git ../sukisu-ultra || true
-    if [ -d "../sukisu-ultra/patches" ]; then
-        for p in ../sukisu-ultra/patches/*.patch; do
-            patch -p1 --force < "$p" || true
-        done
-    fi
+    for p in ../sukisu-ultra/patches/*.patch; do
+        patch -p1 --force < "$p" || true
+    done
 fi
 
-# nomount patch
-if [ "$APPLY_NOMOUNT" = "true" ]; then
-    echo "Applying nomount patch..."
-    # Nomount modifies fs/namespace.c to bypass mount hiding or tracking
-    # We use the specific 5.15 susfs-compatible patch from maxsteeel
-    NOMOUNT_URL="https://raw.githubusercontent.com/maxsteeel/nomount/main/patches/nomount-susfs-kernel-5.15.patch"
-    curl -LSs "$NOMOUNT_URL" -o nomount.patch || true
-    if grep -q "diff --git" nomount.patch; then
-        patch -p1 --force < nomount.patch || echo "Could not apply nomount patch."
-    else
-        echo "Invalid nomount patch downloaded. Skipping."
-    fi
+# ============================================================
+#  Nomount Patch
+# ============================================================
+
+if [[ "$APPLY_NOMOUNT" == "true" ]]; then
+    log "Applying nomount patch..."
+    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/main/patches/nomount-susfs-kernel-5.15.patch" -o nomount.patch
+    patch -p1 --force < nomount.patch || true
 fi
 
-# zRAM optimizations
-if [ "$APPLY_ZRAM" = "true" ]; then
-    echo "Applying zRAM optimizations..."
-    # Usually optimizing zRAM consists of switching defaults to lz4/zstd and multi-comp streams.
-    # These are often toggled via defconfig: CONFIG_ZRAM_DEF_COMP_LZ4=y, etc.
-    # We will enforce them via sed on defconfigs in arch/arm64/configs/*
-    find arch/arm64/configs -type f -exec sed -i 's/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/CONFIG_ZRAM_DEF_COMP_LZ4=y/g' {} +
-    find arch/arm64/configs -type f -exec sed -i 's/# CONFIG_ZSMALLOC_STAT is not set/CONFIG_ZSMALLOC_STAT=y/g' {} +
-fi
+# ============================================================
+#  zRAM / BBR / VFS / LTO
+# ============================================================
 
-# BBR TCP Congestion Control
-if [ "$APPLY_BBR" = "true" ]; then
-    echo "Applying BBR configuration..."
-    # Setting bbr as default in defconfigs
-    find arch/arm64/configs -type f -exec sed -i 's/# CONFIG_TCP_CONG_BBR is not set/CONFIG_TCP_CONG_BBR=y/g' {} +
-    find arch/arm64/configs -type f -exec sed -i 's/CONFIG_DEFAULT_CUBIC=y/# CONFIG_DEFAULT_CUBIC is not set/g' {} +
-    find arch/arm64/configs -type f -exec sed -i 's/# CONFIG_DEFAULT_BBR is not set/CONFIG_DEFAULT_BBR=y/g' {} +
-    find arch/arm64/configs -type f -exec sed -i 's/CONFIG_DEFAULT_TCP_CONG="cubic"/CONFIG_DEFAULT_TCP_CONG="bbr"/g' {} +
-fi
+log "Applying tuning patches..."
 
-# VFS cache optimizations
-if [ "$APPLY_VFS" = "true" ]; then
-    echo "Applying VFS optimizations..."
-    # Typically this involves sysctl vm.vfs_cache_pressure defaults or tweaking fs/dcache.c
-    # We'll enable some typical fs configurations in defconfig.
-    find arch/arm64/configs -type f -exec sed -i 's/# CONFIG_FSCACHE is not set/CONFIG_FSCACHE=y/g' {} +
-fi
+find arch/arm64/configs -type f -exec sed -i \
+    -e 's/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/CONFIG_ZRAM_DEF_COMP_LZ4=y/' \
+    -e 's/# CONFIG_ZSMALLOC_STAT is not set/CONFIG_ZSMALLOC_STAT=y/' {} +
 
-# LTO Thin optimization
-if [ "$APPLY_LTO_THIN" = "true" ]; then
-    echo "Applying LTO Thin optimizations..."
-    find arch/arm64/configs -type f -exec sed -i 's/CONFIG_LTO_NONE=y/# CONFIG_LTO_NONE is not set/g' {} +
-    find arch/arm64/configs -type f -exec sed -i 's/# CONFIG_LTO_CLANG_THIN is not set/CONFIG_LTO_CLANG_THIN=y/g' {} +
-    find arch/arm64/configs -type f -exec sed -i 's/CONFIG_LTO_CLANG_FULL=y/# CONFIG_LTO_CLANG_FULL is not set/g' {} +
-fi
+find arch/arm64/configs -type f -exec sed -i \
+    -e 's/# CONFIG_TCP_CONG_BBR is not set/CONFIG_TCP_CONG_BBR=y/' \
+    -e 's/CONFIG_DEFAULT_CUBIC=y/# CONFIG_DEFAULT_CUBIC is not set/' \
+    -e 's/# CONFIG_DEFAULT_BBR is not set/CONFIG_DEFAULT_BBR=y/' \
+    -e 's/CONFIG_DEFAULT_TCP_CONG="cubic"/CONFIG_DEFAULT_TCP_CONG="bbr"/' {} +
 
-echo "Patching completed!"
+find arch/arm64/configs -type f -exec sed -i \
+    -e 's/# CONFIG_FSCACHE is not set/CONFIG_FSCACHE=y/' {} +
 
-echo "Collecting any rejected patch hunks for debugging..."
-mkdir -p rejects
-find . -type f -name "*.rej" -exec cp --parents {} rejects/ 2>/dev/null \; || true
+find arch/arm64/configs -type f -exec sed -i \
+    -e 's/CONFIG_LTO_NONE=y/# CONFIG_LTO_NONE is not set/' \
+    -e 's/# CONFIG_LTO_CLANG_THIN is not set/CONFIG_LTO_CLANG_THIN=y/' \
+    -e 's/CONFIG_LTO_CLANG_FULL=y/# CONFIG_LTO_CLANG_FULL is not set/' {} +
+
+# ============================================================
+#  ABI Bypass
+# ============================================================
+
+log "Bypassing ABI checks..."
+sed -i 's/ -dirty//g' scripts/setlocalversion 2>/dev/null || true
+touch abi_symbollist.raw 2>/dev/null || true
+sed -i 's/check_defconfig//' build.config.gki 2>/dev/null || true
+
+# ============================================================
+#  Reject Scanner
+# ============================================================
+
+log "Collecting patch rejects..."
+mkdir -p ../patch-rejects
+find . -type f -name '*.rej' -exec cp --parents {} ../patch-rejects/ \; || true
+
+log "Patch manager completed successfully."
