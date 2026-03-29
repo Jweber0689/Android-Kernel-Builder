@@ -1,4 +1,5 @@
-name: "Build kernels"
+
+: "Build kernels"
 
 env:
   OUT_DIR: "out"
@@ -186,8 +187,7 @@ jobs:
           "AR": "",
           "CC": "clang"
         }
-
-    steps:
+      steps:
       - name: "✨ Create working dir"
         run: mkdir -p $kernelDir
 
@@ -404,8 +404,8 @@ jobs:
         APPLY_ZRAM: ${{ github.event.inputs.APPLY_ZRAM }}
         APPLY_BBR: ${{ github.event.inputs.APPLY_BBR }}
         APPLY_VFS: ${{ github.event.inputs.APPLY_VFS }}
-        APPLY_LTO_THIN: ${{ github.event.inputs.APPLY_LTO_THIN }}
-      
+        APPLY_LTO_THIN: ${{ github.event.inputs.APPLY_LTO_THIN }}  
+  
       - name: "😋 Update KernelSU"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         if: ${{ github.event.inputs.kernelSUChoice == 'KernelSU' }}
