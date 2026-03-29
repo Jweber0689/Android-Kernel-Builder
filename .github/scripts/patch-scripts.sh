@@ -151,31 +151,48 @@ if [[ "$USE_SUKISU" == "true" ]]; then
 fi
 
 # ============================================================
-#  Nomount Patch
+#  Nomount (after SUSFS + KSU)
 # ============================================================
 
 if [[ "$APPLY_NOMOUNT" == "true" ]]; then
     log "Applying nomount patch..."
-    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/main/patches/nomount-susfs-kernel-5.15.patch" -o nomount.patch
+
+    # 1) Apply kernel patch
+    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/main/patches/nomount-susfs-kernel-5.15.patch" \
+        -o nomount.patch
     patch -p1 --force < nomount.patch || true
-fi
 
-# ============================================================
-#  Nomount Source Files (Required)
-# ============================================================
-
-if [[ "$APPLY_NOMOUNT" == "true" ]]; then
+    # 2) Add nomount source files
     log "Fetching nomount source files..."
-
     mkdir -p fs/nomount
+
     curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/main/kernel/fs/nomount/nomount.c" \
         -o fs/nomount/nomount.c
 
     curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/main/kernel/include/linux/nomount.h" \
         -o include/linux/nomount.h
 
-    log "Nomount source files added."
+    # 3) Ensure Kconfig + Makefile entries exist
+    log "Wiring nomount into Kconfig/Makefile..."
+
+    if ! grep -q "nomount" fs/Makefile; then
+        echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
+    fi
+
+    if ! grep -q "config NOMOUNT" fs/Kconfig; then
+        cat << 'EOF' >> fs/Kconfig
+
+config NOMOUNT
+    bool "Nomount support"
+    default y
+    help
+      Skip certain mounts and hook readlink for security/hardening.
+EOF
+    fi
+
+    log "Nomount integration complete."
 fi
+
 # ============================================================
 #  zRAM / BBR / VFS / LTO
 # ============================================================
